@@ -78,13 +78,15 @@ def main():
 
     best_val = float("inf")
     t0 = time.time()
+    train_loss = float("nan")
     for step in range(args.steps + 1):
         if step % args.eval_every == 0:
             idxs = np.random.randint(0, len(xva), size=min(args.batch, len(xva)))
             _, vloss = model.forward(xva[idxs], yva[idxs])[:2]
-            print(f"[{step:5d}] train={(train_loss if step else float('nan')):.3f} "
-                  f"val={vloss:.3f} lr={opt.lr:.2e} "
-                  f"{(time.time()-t0)/max(1e-9, time.time()-t0):.0f}s")
+            el = time.time() - t0
+            print(f"[{step:5d}] train={train_loss:.3f} val={vloss:.3f} "
+                  f"lr={opt.lr:.2e} {el:.0f}s "
+                  f"({el/max(1,step):.3f}s/step)", flush=True)
             if step and vloss < best_val:
                 best_val = vloss
                 save(model, tok, args.out)
@@ -98,9 +100,10 @@ def main():
         model.backward(dlogits)
         opt.step()
 
-        if step % 50 == 0:
-            print(f"  step {step:5d}  loss={train_loss:.4f}  "
-                  f"{(time.time()-t0):.0f}s")
+        if step % 25 == 0:
+            el = time.time() - t0
+            print(f"  step {step:5d}  loss={train_loss:.4f}  {el:.0f}s  "
+                  f"({el/max(1,step):.3f}s/step)", flush=True)
 
     save(model, tok, args.out)
 
