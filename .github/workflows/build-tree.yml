@@ -1,0 +1,69 @@
+name: build-tree
+
+on:
+  workflow_dispatch:
+    inputs:
+      order:
+        description: "n-gram 阶数"
+        default: "3"
+      min_count:
+        description: "最小出现次数"
+        default: "3"
+      tag:
+        description: "release tag"
+        default: "tree-v1"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 装依赖
+        run: pip install -q numpy
+
+      - name: 生成语料
+        run: python3 make_corpus_big.py
+
+      - name: 建概率树
+        run: |
+          python3 build_tree.py \
+            --order ${{ inputs.order }} \
+            --min-count ${{ inputs.min_count }} \
+            --out data/tree.pkl
+          ls -lh data/tree.pkl
+
+      - name: 打包
+        run: |
+          cd data
+          gzip -9 -k tree.pkl
+          ls -lh tree.pkl tree.pkl.gz
+          cd ..
+          zip -9 tree-model.zip data/tree.pkl data/corpus_big.txt
+
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: "概率树 ${{ inputs.tag }}"
+          body: |
+            字节级 ${{ inputs.order }}-gram 概率树。
+
+            下载后放到 `data/tree.pkl` 即可使用：
+            ```
+            curl -L -o tree.pkl.gz https://ghfast.top/<此处的 asset 链接>
+            gunzip -k tree.pkl.gz
+            ```
+          files: |
+            data/tree.pkl.gz
+            tree-model.zip
+          fail_on_unmatched_files: true

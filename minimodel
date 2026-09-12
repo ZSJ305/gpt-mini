@@ -1,0 +1,176 @@
+#!/usr/bin/env python3
+"""minimodel —— 从零手搓的小语言模型命令行工具。
+
+用法:
+    minimodel 你好                    直接问
+    minimodel chat                    进入对话模式
+    minimodel chat -v                 对话模式并显示检索过程
+    minimodel build                   重新生成语料库
+    minimodel stats                   查看语料库统计
+    minimodel info                    模型信息
+    minimodel top 20                  出现最多的 20 个字
+    minimodel next 我 10              从「我」出发按共现概率续写 10 个字
+"""
+import argparse
+import os
+import random
+import sys
+import time
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, HERE)
+
+BANNER = r"""
+            _              _           _
+  _ __ ___ (_)_ __ ___   __| | ___   ___| | ___
+ | '_ ` _ \| | '_ ` _ \ / _` |/ _ \ / _ \ |/ _ \
+ | | | | | | | | | | | | (_| | (_) |  __/ |  __/
+ |_| |_| |_|_|_| |_| |_|\__,_|\___/ \___|_|\___|
+"""
+
+
+def cmd_ask(st, args):
+    import simple
+    simple.load()
+    q = " ".join(args.query)
+    print(f"你: {q}")
+    t0 = time.time()
+    if args.verbose:
+        os.environ["MINIMODEL_VERBOSE"] = "1"
+    print(f"小豆: {simple.answer(q)}")
+    if args.verbose:
+        print(f"\n({time.time()-t0:.2f}s)")
+
+def cmd_chat(st, args):
+    import simple
+    simple.load()
+    print(BANNER)
+    print("  小豆 0.1 · 字节级共现模型 · 输入 /exit 退出\n")
+    while True:
+        try:
+            q = input("你: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n再见。")
+            break
+        if not q:
+            continue
+        if q in ("/exit", "/quit", "/q"):
+            print("小豆: 再见，记得早点休息。")
+            break
+        if q == "/verbose":
+            args.verbose = not args.verbose
+            print(f"(检索过程: {'开' if args.verbose else '关'})")
+            continue
+        t0 = time.time()
+        print("小豆:", simple.answer(q))
+        if args.verbose:
+            print(f"({time.time()-t0:.2f}s)")
+
+
+def cmd_build(st, args):
+    import subprocess
+    print("重新生成语料库……")
+    subprocess.run([sys.executable, os.path.join(HERE, "make_corpus_big.py")], check=True)
+    cache = os.path.join(HERE, "data/stats.pkl")
+    if os.path.exists(cache):
+        os.remove(cache)
+        print("已清空统计缓存")
+
+
+def cmd_stats(st, args):
+    qa = st["qa"]
+    print(f"问答对      {st['n']:,}")
+    print(f"语料字节    {st['bytes']:,} ({st['bytes']/1024/1024:.2f} MB)")
+    print(f"转移表      {st['trans'].shape[0]}x{st['trans'].shape[1]} (UTF-8 字节级)")
+    print(f"非零转移    {int((st['trans'] > 0).sum()):,}")
+    print(f"倒排索引字  {len(st['inv']):,}")
+
+    ql = [len(q) for q, _ in qa]
+    al = [len(a) for _, a in qa]
+    print(f"\n问句长度    最短 {min(ql)} / 平均 {sum(ql)/len(ql):.1f} / 最长 {max(ql)}")
+    print(f"答句长度    最短 {min(al)} / 平均 {sum(al)/len(al):.1f} / 最长 {max(al)}")
+
+
+def cmd_info(st, args):
+    print(BANNER)
+    print("  小豆 minimodel 0.1")
+    print("  ─────────────────────────────────────")
+    print("  架构      统计式共现检索（非神经网络）")
+    print("  分词      字级 token / UTF-8 字节级统计")
+    print("  参数      0（全部是查表 + 概率采样）")
+    print("  上下文    整句检索 + 相邻字节转移")
+    print("  训练      无（语料即模型）")
+    print(f"  语料      {st['n']:,} 条问答")
+    print("  ─────────────────────────────────────")
+    print("  这是「第一个伪 LLM」的升级版：能跑、看着像对话，")
+    print("  但本质仍是查表 + 概率，不理解语义。")
+    print()
+
+
+def cmd_top(st, args):
+    from collections import Counter
+    text = open(os.path.join(HERE, "data/corpus_big.txt"), encoding="utf-8").read()
+    for i, (ch, c) in enumerate(Counter(text).most_common(args.n), 1):
+        show = ch if ch != "\n" else "\\n"
+        print(f"{i:3d}. {show:4s}  {c:,}")
+
+
+def cmd_next(st, args):
+    from answer import generate
+    out = generate(st, args.seed, max_len=args.n, rng=random.Random(args.seed_int))
+    print(f"{args.seed}{out}")
+
+
+KNOWN = {"chat", "build", "stats", "info", "top", "next"}
+
+
+def main():
+    argv = sys.argv[1:]
+    # 第一个非选项词不是子命令 -> 当作直接提问
+    first = next((a for a in argv if not a.startswith("-")), None)
+    forced_ask = first is not None and first not in KNOWN
+    if forced_ask:
+        idx = argv.index(first)
+        argv = argv[:idx] + ["ask"] + argv[idx:]
+
+    ap = argparse.ArgumentParser(
+        prog="minimodel", description="从零手搓的小语言模型",
+        formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
+    ap.add_argument("--verbose", "-v", action="store_true", help="显示检索过程")
+    sub = ap.add_subparsers(dest="cmd")
+
+    p = sub.add_parser("ask", help="直接提问")
+    p.add_argument("query", nargs="+")
+    sub.add_parser("chat", help="进入对话模式").add_argument("--verbose", "-v", action="store_true")
+    sub.add_parser("build", help="重新生成语料库")
+    sub.add_parser("stats", help="语料库统计")
+    sub.add_parser("info", help="模型信息")
+
+    p = sub.add_parser("top", help="高频字排行")
+    p.add_argument("n", type=int, nargs="?", default=20)
+
+    p = sub.add_parser("next", help="按共现概率续写")
+    p.add_argument("seed")
+    p.add_argument("n", type=int, nargs="?", default=20)
+    p.add_argument("--seed-int", type=int, default=42)
+
+    args = ap.parse_args(argv)
+
+    if args.cmd is None:
+        ap.print_help()
+        return
+    st = None
+    if args.cmd in ("ask", "chat", "stats", "info", "next"):
+        from answer import load_stats
+        t0 = time.time()
+        st = load_stats()
+        if args.cmd in ("ask", "chat") and not os.environ.get("MINIMODEL_QUIET"):
+            print(f"(语料载入 {time.time()-t0:.1f}s · {st['n']:,} 条问答)")
+
+    {"ask": cmd_ask, "chat": cmd_chat, "build": cmd_build,
+     "stats": cmd_stats, "info": cmd_info, "top": cmd_top,
+     "next": cmd_next}[args.cmd](st, args)
+
+
+if __name__ == "__main__":
+    main()
