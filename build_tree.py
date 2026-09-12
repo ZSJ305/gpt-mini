@@ -69,10 +69,15 @@ def main():
     ap.add_argument("--order", type=int, default=3)
     ap.add_argument("--min-count", type=int, default=3)
     ap.add_argument("--out", default=os.path.join(HERE, "data/tree.pkl"))
+    ap.add_argument("--answers-only", action="store_true",
+                    help="只对「答：」后面的文本建树")
     args = ap.parse_args()
 
     t0 = time.time()
     text = open(args.corpus, encoding="utf-8").read()
+    if args.answers_only:
+        text = "\n".join(ln[2:] for ln in text.split("\n") if ln.startswith("答："))
+        print("只取答案文本", end="  ")
     print(f"语料 {len(text):,} 字符，读入 {time.time()-t0:.1f}s")
 
     tree = build(text, args.order, args.min_count)

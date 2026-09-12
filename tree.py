@@ -101,11 +101,12 @@ def walk(tree, start, max_len=40, rng=None, temperature=1.0, topk=8):
     rng = rng or random.Random()
     if not start:
         return ""
-def walk(tree, start, max_len=40, rng=None, temperature=1.0, topk=4, order=3):
+def walk(tree, start, max_len=40, rng=None, temperature=1.0, topk=4, order=3, min_out=3):
     """从 start 出发沿树往下走。
 
     每一步只在概率最高的前 topk 个分支里随机选一个 —— 既保证通顺，
     又有变化（同样的输入能给出不同回答）。
+    长度不够 min_out 时遇到句末也不停，避免只吐出一两个字。
     """
     rng = rng or random.Random()
     span = max(1, order - 1)
@@ -124,32 +125,57 @@ def walk(tree, start, max_len=40, rng=None, temperature=1.0, topk=4, order=3):
         ch = cand[int(np.random.default_rng(rng.randrange(1 << 30)).choice(len(cand), p=probs))]
         out.append(ch)
         ctx = (ctx + ch)[-span:]
-        if ch in "。！？\n":
+        if ch == "\n":
+            break
+        if ch in "。！？" and len(out) >= min_out:
             break
     return "".join(out)
 
 
 def pick_start(tree, query, order=3):
-    """从问题里挑起点：优先用末尾的 span 个字，找不到就用单个高频字。"""
+    """在答案树里找起点。
+
+    树只建在答案文本上，所以起点应当尽量落在「答案开头」，
+    也就是以换行符打头的节点；找不到再退回任何包含输入片段的节点。
+    """
     span = max(1, order - 1)
-    for L in range(min(span, len(query)), 0, -1):
-        cand = query[-L:]
-        if cand in tree:
-            return cand
-    # 退一步：问题里任何能作为上下文的两字组合
-    for L in range(min(span, len(query)), 1, -1):
-        for i in range(len(query) - L + 1):
-            if query[i:i + L] in tree:
-                return query[i:i + L]
-    # 最后：单字
-    for ch in reversed(query):
-        if ch in tree:
-            return ch
-    return None
+    q = query.strip()
+    if not q:
+        return None
+
+    # 1) 以换行开头（=答案开头），且包含输入的关键片段
+    best, score = None, 0
+    for k in tree:
+        if not k.startswith("\n"):
+            continue
+        for L in range(min(span, len(q)), 0, -1):
+            if q[-L:] in k:
+                if L > score:
+                    score, best = L, k
+                break
+    if best:
+        return best
+
+    # 2) 退一步：任何包含输入片段的节点
+    for k in tree:
+        for L in range(min(span, len(q)), 0, -1):
+            if q[-L:] in k:
+                if L > score:
+                    score, best = L, k
+                break
+    return best
+
+
+def extract_answer(text):
+    """从走出来的文本里取「答：」之后的部分。"""
+    for marker in ("\n答：", "答："):
+        if marker in text:
+            return text.split(marker)[-1].strip()
+    return text.strip()
 
 
 def answer(tree, query, rng=None, max_len=60, temperature=0.9, topk=4, order=3, tries=8):
-    """生成回答：从问题末尾接话，走树拼句子。"""
+    """生成回答：从匹配到的树节点往下走，取「答：」之后作为回答。"""
     rng = rng or random.Random()
     seed = pick_start(tree, query, order)
     if seed is None:
@@ -159,13 +185,12 @@ def answer(tree, query, rng=None, max_len=60, temperature=0.9, topk=4, order=3, 
     for _ in range(tries):
         seg = walk(tree, seed, max_len=max_len, rng=rng,
                    temperature=temperature, topk=topk, order=order)
-        if not seg:
-            continue
         s = seed + seg
-        if s.endswith(("。", "！", "？")) and 6 <= len(s) <= 45:
-            return s
-        if len(s) > len(best):
-            best = s
+        ans = extract_answer(s)
+        if 4 <= len(ans) <= 45 and ans.endswith(("。", "！", "？")):
+            return ans
+        if len(ans) > len(best):
+            best = ans
 
     if best and not best.endswith(("。", "！", "？")):
         best += "。"

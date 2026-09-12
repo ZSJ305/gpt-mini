@@ -39,6 +39,7 @@ jobs:
           python3 build_tree.py \
             --order ${{ inputs.order }} \
             --min-count ${{ inputs.min_count }} \
+            --answers-only \
             --out data/tree.pkl
           ls -lh data/tree.pkl
 
