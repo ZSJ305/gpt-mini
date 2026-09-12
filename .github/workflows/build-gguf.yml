@@ -1,0 +1,74 @@
+name: build-gguf
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "HF 模型 repo"
+        default: "Qwen/Qwen2.5-0.5B-Instruct"
+      quant:
+        description: "量化类型"
+        default: "Q4_K_M"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 装依赖
+        run: |
+          pip install -q torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -q transformers sentencepiece protobuf huggingface_hub gguf
+
+      - name: 编译 llama.cpp
+        run: |
+          git clone --depth 1 https://github.com/ggml-org/llama.cpp
+          cd llama.cpp
+          cmake -B build -DGGML_NATIVE=OFF -DLLAMA_CURL=OFF
+          cmake --build build --config Release -j$(nproc) --target llama-quantize
+          ls build/bin/
+
+      - name: 下载 HF 模型
+        env:
+          HF_ENDPOINT: https://hf-mirror.com
+        run: |
+          python3 - <<'PY'
+          import os
+          from huggingface_hub import snapshot_download
+          snapshot_download(
+              repo_id="${{ inputs.repo }}",
+              local_dir="hf_model",
+              allow_patterns=["*.json", "*.safetensors", "*.model", "*.txt"],
+          )
+          print("下载完成")
+          PY
+          du -sh hf_model
+
+      - name: 转成 GGUF
+        run: |
+          cd llama.cpp
+          python3 convert_hf_to_gguf.py ../hf_model \
+            --outfile ../model-f16.gguf --outtype f16
+          cd ..
+          ls -lh model-f16.gguf
+
+      - name: 量化
+        run: |
+          ./llama.cpp/build/bin/llama-quantize \
+            model-f16.gguf model-${{ inputs.quant }}.gguf ${{ inputs.quant }}
+          ls -lh model-*.gguf
+
+      - name: 上传
+        uses: actions/upload-artifact@v4
+        with:
+          name: gguf-model
+          path: model-*.gguf
+          retention-days: 30
+          compression-level: 0
