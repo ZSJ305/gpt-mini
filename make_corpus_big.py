@@ -258,6 +258,14 @@ def gen_domains(count):
     return out
 
 
+def gen_oral(count):
+    from oral import ORAL
+    out = []
+    for _ in range(count):
+        out.append(random.choice(ORAL))
+    return out
+
+
 def gen_domain_variants(count):
     from knowledge import expand
     return expand(count)
@@ -336,6 +344,7 @@ def gen_emotion(count):
 def main():
     pairs = []
     pairs += gen_basic(20000)
+    pairs += gen_oral(60000)
     pairs += gen_domains(40000)
     pairs += gen_domain_variants(30000)
     pairs += gen_slots(60000)

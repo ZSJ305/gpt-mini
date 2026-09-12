@@ -29,21 +29,34 @@ BANNER = r"""
 """
 
 
+_TREE = None
+
+
+def get_tree():
+    global _TREE
+    if _TREE is None:
+        import tree as T
+        t0 = time.time()
+        _TREE = (T.load_tree(), T)
+        if not os.environ.get("MINIMODEL_QUIET"):
+            print(f"(概率树载入 {time.time()-t0:.2f}s)", file=sys.stderr)
+    return _TREE
+
+
 def cmd_ask(st, args):
-    import simple
-    simple.load()
+    import random as _r
+    tr, T = get_tree()
     q = " ".join(args.query)
     print(f"你: {q}")
     t0 = time.time()
+    ans = T.answer(tr, q, _r.Random(), topk=args.topk, order=args.order)
+    print(f"小豆: {ans}")
     if args.verbose:
-        os.environ["MINIMODEL_VERBOSE"] = "1"
-    print(f"小豆: {simple.answer(q)}")
-    if args.verbose:
-        print(f"\n({time.time()-t0:.2f}s)")
+        print(f"\n起点: {T.pick_start(tr, q, args.order)}  ({time.time()-t0:.3f}s)")
 
 def cmd_chat(st, args):
-    import simple
-    simple.load()
+    import random as _r
+    tr, T = get_tree()
     print(BANNER)
     print("  小豆 0.1 · 字节级共现模型 · 输入 /exit 退出\n")
     while True:
@@ -62,7 +75,7 @@ def cmd_chat(st, args):
             print(f"(检索过程: {'开' if args.verbose else '关'})")
             continue
         t0 = time.time()
-        print("小豆:", simple.answer(q))
+        print("小豆:", T.answer(tr, q, _r.Random(), topk=args.topk, order=args.order))
         if args.verbose:
             print(f"({time.time()-t0:.2f}s)")
 
@@ -136,7 +149,9 @@ def main():
     ap = argparse.ArgumentParser(
         prog="minimodel", description="从零手搓的小语言模型",
         formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
-    ap.add_argument("--verbose", "-v", action="store_true", help="显示检索过程")
+    ap.add_argument("--verbose", "-v", action="store_true", help="显示生成细节")
+    ap.add_argument("--topk", type=int, default=3, help="每步从概率最高的前几个分支里选")
+    ap.add_argument("--order", type=int, default=4, help="n-gram 阶数")
     sub = ap.add_subparsers(dest="cmd")
 
     p = sub.add_parser("ask", help="直接提问")

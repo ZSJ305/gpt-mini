@@ -3,9 +3,9 @@ name: build-tree
 on:
   workflow_dispatch:
     inputs:
-      order:
-        description: "n-gram 阶数"
-        default: "3"
+      orders:
+        description: "n-gram 阶数（逗号分隔，多阶 backoff）"
+        default: "5,4,3"
       min_count:
         description: "最小出现次数"
         default: "3"
@@ -37,7 +37,7 @@ jobs:
       - name: 建概率树
         run: |
           python3 build_tree.py \
-            --order ${{ inputs.order }} \
+            --orders ${{ inputs.orders }} \
             --min-count ${{ inputs.min_count }} \
             --answers-only \
             --out data/tree.pkl
