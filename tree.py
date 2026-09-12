@@ -77,7 +77,11 @@ def save_tree(tree, path=CACHE):
 def load_tree(path=CACHE, corpus=None):
     if os.path.exists(path):
         with open(path, "rb") as f:
-            return pickle.load(f)
+            blob = pickle.load(f)
+        # 兼容两种存法：裸树 / {"order":..., "tree":...}
+        if isinstance(blob, dict) and "tree" in blob:
+            return blob["tree"]
+        return blob
     print("首次构建概率树……")
     text = open(corpus or os.path.join(HERE, "data/corpus_big.txt"), encoding="utf-8").read()
     tree = build_tree(text)
@@ -97,18 +101,16 @@ def walk(tree, start, max_len=40, rng=None, temperature=1.0, topk=8):
     rng = rng or random.Random()
     if not start:
         return ""
-def walk(tree, start, max_len=40, rng=None, temperature=1.0, topk=4, order=2):
+def walk(tree, start, max_len=40, rng=None, temperature=1.0, topk=4, order=3):
     """从 start 出发沿树往下走。
 
     每一步只在概率最高的前 topk 个分支里随机选一个 —— 既保证通顺，
     又有变化（同样的输入能给出不同回答）。
     """
     rng = rng or random.Random()
-    if isinstance(start, str):
-        start = start.encode("utf-8")
     span = max(1, order - 1)
     ctx = start[-span:]
-    out = bytearray()
+    out = []
     for _ in range(max_len):
         branches = tree.get(ctx)
         if not branches:
@@ -119,28 +121,34 @@ def walk(tree, start, max_len=40, rng=None, temperature=1.0, topk=4, order=2):
         if temperature != 1.0:
             probs = np.power(probs, 1.0 / temperature)
         probs /= probs.sum()
-        pick = int(np.random.default_rng(rng.randrange(1 << 30)).choice(len(cand), p=probs))
-        b = cand[pick]
-        out.append(b)
-        ctx = (ctx + bytes([b]))[-span:]
-        # 句末就停
-        if out.endswith(b"\xe3\x80\x82") or out.endswith(b"\xef\xbc\x81") or out.endswith(b"\xef\xbc\x9f") or out.endswith(b"\n"):
+        ch = cand[int(np.random.default_rng(rng.randrange(1 << 30)).choice(len(cand), p=probs))]
+        out.append(ch)
+        ctx = (ctx + ch)[-span:]
+        if ch in "。！？\n":
             break
-    return out.decode("utf-8", errors="ignore")
+    return "".join(out)
 
 
-def pick_start(tree, query, order=2):
-    """从问题里挑起点：优先用末尾的 span 个字节。"""
+def pick_start(tree, query, order=3):
+    """从问题里挑起点：优先用末尾的 span 个字，找不到就用单个高频字。"""
     span = max(1, order - 1)
-    qb = query.encode("utf-8")
-    for L in range(min(span, len(qb)), 0, -1):
-        cand = qb[-L:]
+    for L in range(min(span, len(query)), 0, -1):
+        cand = query[-L:]
         if cand in tree:
             return cand
+    # 退一步：问题里任何能作为上下文的两字组合
+    for L in range(min(span, len(query)), 1, -1):
+        for i in range(len(query) - L + 1):
+            if query[i:i + L] in tree:
+                return query[i:i + L]
+    # 最后：单字
+    for ch in reversed(query):
+        if ch in tree:
+            return ch
     return None
 
 
-def answer(tree, query, rng=None, max_len=60, temperature=0.9, topk=4, order=2, tries=6):
+def answer(tree, query, rng=None, max_len=60, temperature=0.9, topk=4, order=3, tries=8):
     """生成回答：从问题末尾接话，走树拼句子。"""
     rng = rng or random.Random()
     seed = pick_start(tree, query, order)
@@ -153,7 +161,7 @@ def answer(tree, query, rng=None, max_len=60, temperature=0.9, topk=4, order=2, 
                    temperature=temperature, topk=topk, order=order)
         if not seg:
             continue
-        s = seed.decode("utf-8", errors="ignore") + seg
+        s = seed + seg
         if s.endswith(("。", "！", "？")) and 6 <= len(s) <= 45:
             return s
         if len(s) > len(best):
